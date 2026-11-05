@@ -90,3 +90,27 @@ test("cookieHeaderSet replaces EVERY stale segment (core reads the first)", () =
   assert.equal(cookieValueOf(header, "a"), "fresh");
   assert.equal(cookieHeaderSet(undefined, "a", "fresh"), "a=fresh");
 });
+
+/* TLS 리스너에서는 코어가 `https://` 오리진을 audience로 쓴다
+   (dsh-client-connection: secure = webServer.protocol === "https:"). 여기서 http 기준으로
+   발행하면 쿠키 이름이 코어의 것과 달라져 게이트 통과 후 코어에서 전부 거부된다. */
+test("canonicalAuthority: TLS에서는 코어와 같은 origin을 쓴다", () => {
+  assert.equal(canonicalAuthority("192.168.0.35:3080", true), "https://192.168.0.35:3080");
+  assert.equal(canonicalAuthority("192.168.0.35:3080", false), "192.168.0.35:3080");
+  assert.equal(canonicalAuthority("example.com", true), "https://example.com");
+  /* 기본 포트는 WHATWG origin에서 생략된다(=코어도 같은 값을 쓴다). */
+  assert.equal(canonicalAuthority("example.com:443", true), "https://example.com");
+  assert.equal(canonicalAuthority("", true), null);
+});
+
+test("HTTP와 HTTPS는 서로 다른 쿠키 이름을 만든다(불일치 재현 방지)", () => {
+  const host = "192.168.0.35:3080";
+  const httpName = dshAuthCookieName(canonicalAuthority(host, false));
+  const httpsName = dshAuthCookieName(canonicalAuthority(host, true));
+  assert.notEqual(httpName, httpsName);
+  /* 발행한 이름으로 다시 조회하면 디코드까지 왕복한다(TLS 기준). */
+  const authority = canonicalAuthority(host, true);
+  const minted = encodeDshAuthCookie(authority, secret, 60_000, NOW);
+  assert.equal(minted.name, httpsName);
+  assert.equal(decodeDshAuthCookie(minted.value, secret, authority, NOW + 1000)?.authority, authority);
+});
